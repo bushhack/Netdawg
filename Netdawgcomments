@@ -1,0 +1,182 @@
+# import necessary libraries
+import argparse
+#module provides access to the BSD socket interface (Berkeley Software Distribution)
+import shlex
+#Command-line parsing library: container for argument specifications & generates help and usage messages
+import socket
+  #write lexical analyzers (converts the High level input program into a sequence of Tokens) for simple syntaxes resembling that of the Unix shell (The shlex module is only designed for Unix shells)
+import subprocess
+  #creates processes that allows us to interact with client programs
+import sys
+  #module provides access to variables used/ maintained by the interpreter and to functions that interact with the interpreter
+import textwrap
+  #module provides convenience functions
+import threading
+  # module constructs higher-level threading interfaces (run multiple I/O-bound tasks simultaneously)
+import os
+
+# execute function that receives, runs, returns output of commands
+def execute(cmd):
+  
+  cmd = cmd.strip()
+  
+  if not cmd:
+    return
+    
+  output = subprocess.check_output(shlex.split(cmd),stderr=subprocess.STDOUT)
+    #Run command with arguments and return its output; Split the strings using shell-like syntax; Captured stderr from the child process, stdout and stderr will be combined
+  
+  return output.decode()
+  #convert bytes to string
+
+
+  
+  #Classes provide a means of bundling data and functionality together; "blueprints" for objects; written in Pascal case
+class Netdawg:
+  # initialize object with arguments from the command line and buffer and setup the socket object  
+  def __initial__(self,args,buffer=None):
+    #methods that begin with double underscores are known as "Magic" or "Dunder" Methods (Dunder, Double UNDERscore - get it?)
+    
+    self.args = args
+    self.buffer = buffer
+    self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #creates method (function that the object provides) / creates socket
+    #socket.AF_INET = constant represents the address (and protocol) families, used for the first argument to socket()
+    #socket.SOCK_STREAM = constant represents the socket types, used for the second argument to socket()
+    self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+      #Set the value of the given socket option - socket.setsockopt(level, optname, value: int)
+      #level = (Input) Whether the request applies to the socket itself or the underlying protocol being used. SOL_SOCKET - Request applies to socket layer.
+      #optname = passed uninterpreted to the appropriate protocol module for interpretation
+      #value = the argument should be nonzero to enable a boolean option, or zero if the option is to be disabled
+      #the SO_REUSEADDR flag tells the kernel to reuse a local socket in TIME_WAIT state, without waiting for its natural timeout to expire
+    #What is a socket? A socket can be thought of as an endpoint in a two-way communication channel. An endpoint is a combination of an IP address and a port number.
+  #What are some functions of a socket? send data (write), listen (receive a connection), bind (socket identification), connect (act as a sender), accept (confirmation/ accepting to receive), read (receive data), close (close connection)
+
+
+  # upon executing, have 2 ways to setup: listen or send
+  def run(self):
+ 
+    if self.args.listen:
+      self.listen()
+    else:
+      self.send()
+      
+
+  # send method
+  def send(self):
+
+    # connect to target IP and PORT and send the buffer first there is one
+    self.socket.connect((self.args.target, self.args.port))
+    
+    if self.buffer:
+      self.socket.send(self.buffer)
+    
+    # try / catch block
+    try:
+      # while look to receive data from target
+      # receiving data block increments of 4096
+      while True:
+        recv_len = 1
+        response = ''
+        while recv_len:
+          data = self.socket.recv(4096)
+          recv_len = len(data)
+          response += data.decode()
+          # breaks connection if there's no more data coming in
+          if recv_len < 4096:
+            break
+            # try: 
+            #   cmd, params = data.split(" ", 1)
+            #   if cmd == "cd":
+            #     os.chdir(params)
+            #     s.send(">")
+            #     continue       
+          # continue the loop: print received response data, receive '>' input  
+          if response:
+            print(response)
+            buffer = input('>')
+            buffer += '"\n"'
+            self.socket.send(buffer.encode())
+            
+    # allows us to manually close connection with <CTRL + C>
+    except KeyboardInterrupt:
+      print('User terminated.')
+      self.socket.close()
+      sys.exit()
+
+        
+  # listen method
+  def listen(self):
+
+    # bind to target IP and PORT
+    self.socket.bind((self.args.target, self.args.port))
+    self.socket.listen(5)
+    
+    while True:
+      client_socket, _ = self.socket.accept()
+      # passes the connected socket to the options method below
+      client_thread = threading.Thread(target=self.manager, args=(client_socket,))
+      client_thread.start()
+
+
+  # manager method manages execution of commandline arguments
+  def manager(self, client_socket):
+    
+    if self.args.command:
+      cmd_buffer = b''
+      while True:
+        try:
+          client_socket.send(b'=>')
+          while '\n' not in cmd_buffer.decode():
+            cmd_buffer += client_socket.recv(64)
+          response = execute(cmd_buffer.decode())
+          if response:
+            client_socket.send(response.encode())
+          cmd_buffer = b''
+        except Exception as e:
+          print(f'Connection Terminated... {e}')
+          self.socket.close()
+          sys.exit()
+
+
+# handles commandline arguments and calls additional options
+if __name__ == '__main__':
+  # argparse module creates command line interface
+  # user guide for proper syntax format 
+  parser = argparse.ArgumentParser(description='Desk Support', formatter_class=argparse.RawDescriptionHelpFormatter, epilog=textwrap.dedent('''Example: netcat.py -t 192.16.1.108 -p 5555 -l -c #command shell''')) 
+  # setup default formats for using optional features
+  # -t for target IP designation, -p for PORT designation
+  # optional arguments will start a command shell and execute commands
+  parser.add_argument('-t', '--target', default='192.168.1.203', help='specified IP')
+  parser.add_argument('-p', '--port', type=int, default=8852, help='specified port')
+  parser.add_argument('-l', '--listen', action='store_true', help='listen')
+  parser.add_argument('-c', '--command', action='store_true', help='command shell')
+  args = parser.parse_args()
+
+  # listening mode buffer
+    # initalize as empty string, buffer content comes from stdin
+  if args.listen:
+    buffer = ''
+  else:
+    buffer = sys.stdin.read()
+  
+  nc = Netdawg(args, buffer.encode())
+  nc.run()
+
+"""
+Resources:
+https://docs.python.org/3/library/argparse.html
+https://docs.python.org/3/library/socket.html
+https://docs.python.org/3/library/shlex.html
+https://docs.python.org/3/library/subprocess.html
+https://docs.python.org/3/library/sys.html
+https://docs.python.org/3/library/textwrap.html
+https://docs.python.org/3/library/threading.html
+https://www.digitalocean.com/community/tutorials/python-string-encode-decode
+https://docs.python.org/3/tutorial/classes.html
+https://www.geeksforgeeks.org/__init__-in-python/
+https://www.geeksforgeeks.org/socket-in-computer-network/
+https://manpages.debian.org/bullseye/manpages-dev/setsockopt.2.en.html
+
+
+"""
